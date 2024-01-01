@@ -9,7 +9,7 @@ import (
 )
 
 func db() *mongo.Client {
-	clientOptions := options.Client().ApplyURI("mongodb://localhost:27017")
+	clientOptions := options.Client().ApplyURI("mongodb+srv://archan:987kL3Taipr2rXoW@cluster0.pqzn9.mongodb.net/go-ekart?retryWrites=true&w=majority")
 	client, err := mongo.Connect(context.TODO(), clientOptions)
 	if err != nil {
 		panic(err)
