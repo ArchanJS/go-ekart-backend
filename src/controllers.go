@@ -3,12 +3,15 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"github.com/gorilla/mux"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
+	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
+	"golang.org/x/crypto/bcrypt"
 )
 
 type sizes struct {
@@ -23,7 +26,14 @@ type product struct {
 	Stock []sizes `json:"stock"`
 }
 
+type user struct {
+	Name     string `json:"name"`
+	Phone    string `json:"phone"`
+	Password string `json:"password"`
+}
+
 var productCol = db().Database("goekart").Collection("product")
+var userCol = db().Database("goekart").Collection("user")
 
 func createProduct(res http.ResponseWriter, req *http.Request) {
 	// fmt.Println("Hello")
@@ -151,4 +161,36 @@ func buyProduct(res http.ResponseWriter, req *http.Request) {
 
 	json.NewEncoder(res).Encode(updatedProd)
 
+}
+
+func createUser(res http.ResponseWriter, req *http.Request) {
+	res.Header().Set("Content-Type", "application/json")
+	var body user
+	decodeErr := json.NewDecoder(req.Body).Decode(&body)
+	if decodeErr != nil {
+		fmt.Println(decodeErr)
+		http.Error(res, decodeErr.Error(), http.StatusInternalServerError)
+		return
+	}
+	hashedPassword, hashErr := bcrypt.GenerateFromPassword([]byte(body.Password), bcrypt.DefaultCost)
+	if hashErr != nil {
+		fmt.Println(hashErr)
+		http.Error(res, hashErr.Error(), http.StatusInternalServerError)
+		return
+	}
+	body.Password = string(hashedPassword)
+	indexModel := mongo.IndexModel{
+		Keys:    bson.M{"phone": 1},
+		Options: options.Index().SetUnique(true),
+	}
+	userCol.Indexes().CreateOne(context.TODO(), indexModel)
+	userData, userErr := userCol.InsertOne(context.TODO(), body)
+
+	if userErr != nil {
+		fmt.Println(userErr)
+		http.Error(res, userErr.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(res).Encode(userData)
 }
