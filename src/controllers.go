@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 
+	"github.com/golang-jwt/jwt"
 	"github.com/gorilla/mux"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -34,6 +36,8 @@ type user struct {
 
 var productCol = db().Database("goekart").Collection("product")
 var userCol = db().Database("goekart").Collection("user")
+
+var HashKey = []byte("randomsecret")
 
 func createProduct(res http.ResponseWriter, req *http.Request) {
 	// fmt.Println("Hello")
@@ -193,4 +197,55 @@ func createUser(res http.ResponseWriter, req *http.Request) {
 	}
 
 	json.NewEncoder(res).Encode(userData)
+}
+
+func login(res http.ResponseWriter, req *http.Request) {
+	res.Header().Set("Content-Type", "application/json")
+	type reqBody struct {
+		Phone    string `json:"phone"`
+		Password string `json:"password"`
+	}
+	var body reqBody
+	decodeErr := json.NewDecoder(req.Body).Decode(&body)
+	if decodeErr != nil {
+		fmt.Println(decodeErr)
+		http.Error(res, decodeErr.Error(), http.StatusInternalServerError)
+		return
+	}
+	filter := bson.D{{"phone", body.Phone}}
+	var decodedData user
+	fetchErr := userCol.FindOne(context.TODO(), filter).Decode(&decodedData)
+	if fetchErr != nil {
+		fmt.Println(fetchErr)
+		http.Error(res, fetchErr.Error(), http.StatusInternalServerError)
+		return
+	}
+	decryptErr := bcrypt.CompareHashAndPassword([]byte(decodedData.Password), []byte(body.Password))
+	if decryptErr != nil {
+		fmt.Println(decryptErr)
+		http.Error(res, "Invalid credentials", http.StatusBadRequest)
+		return
+	}
+	claims := jwt.MapClaims{
+		"id":  body.Password,
+		"iat": time.Now().Unix(),
+		"exp": time.Now().Add(time.Hour * 30000).Unix(),
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	signedToken, signErr := token.SignedString(HashKey)
+	if signErr != nil {
+		fmt.Println(signErr)
+		http.Error(res, signErr.Error(), http.StatusInternalServerError)
+		return
+	}
+	type response struct {
+		Name  string `json:"name"`
+		Phone string `json:"phone"`
+		Token string `json:"token"`
+	}
+	var userResponse response
+	userResponse.Name = decodedData.Name
+	userResponse.Phone = decodedData.Phone
+	userResponse.Token = signedToken
+	json.NewEncoder(res).Encode(userResponse)
 }
