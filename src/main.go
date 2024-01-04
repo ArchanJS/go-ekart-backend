@@ -18,6 +18,7 @@ func main() {
 	routes.HandleFunc("/product/{id}", buyProduct).Methods("PUT")
 	routes.HandleFunc("/user", createUser).Methods("POST")
 	routes.HandleFunc("/user/login", login).Methods("POST")
+	routes.HandleFunc("/user", fetchUserDataByToken).Methods("GET")
 
 	log.Fatal(http.ListenAndServe(":8000", routes))
 

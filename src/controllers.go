@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt"
@@ -34,10 +36,44 @@ type user struct {
 	Password string `json:"password"`
 }
 
+type dbuser struct {
+	Id       primitive.ObjectID `json:"id" bson:"_id"`
+	Name     string             `json:"name"`
+	Phone    string             `json:"phone"`
+	Password string             `json:"password"`
+}
+
 var productCol = db().Database("goekart").Collection("product")
 var userCol = db().Database("goekart").Collection("user")
 
 var HashKey = []byte("randomsecret")
+
+func DecodeJWTAndGetID(signedToken string) (string, error) {
+	signingKey := []byte(HashKey)
+	token, err := jwt.Parse(signedToken, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
+		return signingKey, nil
+	})
+
+	if err != nil {
+		return "", err
+	}
+
+	if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
+		// fmt.Println("claims", claims)
+		userId := claims["id"].(string)
+		return userId, nil
+	} else {
+		return "", errors.New("Invalid token")
+	}
+}
+
+func filterPassword(userData dbuser) dbuser {
+	userData.Password = ""
+	return userData
+}
 
 func createProduct(res http.ResponseWriter, req *http.Request) {
 	// fmt.Println("Hello")
@@ -213,7 +249,8 @@ func login(res http.ResponseWriter, req *http.Request) {
 		return
 	}
 	filter := bson.D{{"phone", body.Phone}}
-	var decodedData user
+
+	var decodedData dbuser
 	fetchErr := userCol.FindOne(context.TODO(), filter).Decode(&decodedData)
 	if fetchErr != nil {
 		fmt.Println(fetchErr)
@@ -226,8 +263,9 @@ func login(res http.ResponseWriter, req *http.Request) {
 		http.Error(res, "Invalid credentials", http.StatusBadRequest)
 		return
 	}
+	// fmt.Println(decodedData)
 	claims := jwt.MapClaims{
-		"id":  body.Password,
+		"id":  decodedData.Id.Hex(),
 		"iat": time.Now().Unix(),
 		"exp": time.Now().Add(time.Hour * 30000).Unix(),
 	}
@@ -239,13 +277,50 @@ func login(res http.ResponseWriter, req *http.Request) {
 		return
 	}
 	type response struct {
+		Id    string `json:"id"`
 		Name  string `json:"name"`
 		Phone string `json:"phone"`
 		Token string `json:"token"`
 	}
 	var userResponse response
+	userResponse.Id = decodedData.Id.Hex()
 	userResponse.Name = decodedData.Name
 	userResponse.Phone = decodedData.Phone
 	userResponse.Token = signedToken
 	json.NewEncoder(res).Encode(userResponse)
+}
+
+func fetchUserDataByToken(res http.ResponseWriter, req *http.Request) {
+	res.Header().Set("Content-Type", "application/json")
+	authHeader := req.Header.Get("Authorization")
+	if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer") {
+		http.Error(res, "No token provided", http.StatusBadRequest)
+		return
+	}
+	token := strings.TrimPrefix(authHeader, "Bearer ")
+	id, decodeErr := DecodeJWTAndGetID(token)
+	if decodeErr != nil {
+		fmt.Println(decodeErr)
+		http.Error(res, decodeErr.Error(), http.StatusInternalServerError)
+		return
+	}
+	_id, convErr := primitive.ObjectIDFromHex(id)
+	if convErr != nil {
+		fmt.Println(convErr)
+		http.Error(res, convErr.Error(), http.StatusInternalServerError)
+		return
+	}
+	// fmt.Println("id", id)
+	filter := bson.D{{"_id", _id}}
+
+	var userData dbuser
+
+	fetchErr := userCol.FindOne(context.TODO(), filter).Decode(&userData)
+	if fetchErr != nil {
+		fmt.Println(fetchErr)
+		http.Error(res, fetchErr.Error(), http.StatusInternalServerError)
+		return
+	}
+	userData = filterPassword(userData)
+	json.NewEncoder(res).Encode(userData)
 }
